@@ -1,43 +1,42 @@
+# Encryption.py
+import base64, zlib
 from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
+from Crypto.Protocol.KDF import HKDF
+from Crypto.Hash import SHA256
 from Crypto.Random import get_random_bytes
-import base64
 
-# Function to save the encryption key to a file
-def save_key(key, filename):
-    with open(filename, 'wb') as file:
-        file.write(key)
+# NEW: biometric helper
+from bio_fuzzy import load_helper, recover_secret
 
-# Function to encrypt the message
-def encrypt_message(message, key):
-    cipher = AES.new(key, AES.MODE_CBC)  # AES CBC mode
-    padded_message = pad(message.encode(), AES.block_size)  # Padding the message to block size
-    encrypted_message = cipher.encrypt(padded_message)
-    
-    # Return the encrypted message and the initialization vector (IV)
-    return base64.b64encode(cipher.iv + encrypted_message).decode('utf-8')
+# --- CONFIG: update these to your paths ---
+HELPER_JSON = r"C:\Users\KANISHK\Desktop\Steganography-PJT-main\Steganography\helper.json"
+FACE_IMAGE_FOR_ENCRYPTION = r"C:\Users\KANISHK\Desktop\Steganography-PJT-main\Steganography\face.jpg"
+ENCRYPTED_MESSAGE_TXT = r"C:\Users\KANISHK\Desktop\Steganography-PJT-main\Steganography\encrypted_message.txt"
+# -----------------------------------------
 
-# Function to save the encrypted message to a file
-def save_encrypted_message(encrypted_message, filename):
-    with open(filename, 'w') as file:
-        file.write(encrypted_message)
+def encrypt_message_with_biometrics(plaintext: str, helper_path: str, face_path: str) -> str:
+    helper = load_helper(helper_path)
+    R = recover_secret(face_path, helper)               # recover 223-byte secret from your face
 
-# Generate a random key (128-bit key)
-key = get_random_bytes(16)
+    salt = get_random_bytes(16)                         # per-message HKDF salt
+    cek  = HKDF(R, 32, salt, SHA256)                    # 256-bit CEK
 
-# Simulating a long message
-long_message = "This is a very long message. " * 100
+    nonce = get_random_bytes(12)                        # GCM nonce
+    pt = zlib.compress(plaintext.encode("utf-8"))       # optional but recommended
+    cipher = AES.new(cek, AES.MODE_GCM, nonce=nonce)
+    ct, tag = cipher.encrypt_and_digest(pt)
 
-# Encrypt the message
-encrypted_message = encrypt_message(long_message, key)
+    # Envelope: [0x01 | salt(16) | nonce(12) | tag(16) | ct]
+    blob = b'\x01' + salt + nonce + tag + ct
+    return base64.b64encode(blob).decode("utf-8")
 
-# ✅ Corrected paths using raw strings
-encrypted_message_path = r"C:\Users\KANISHK\Desktop\Steganography-PJT-main\Steganography\encrypted_message.txt"
-encryption_key_path = r"C:\Users\KANISHK\Desktop\Steganography-PJT-main\Steganography\encryption_key.bin"
+def save_encrypted_message(encrypted_b64: str, path: str):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(encrypted_b64)
 
-# Save the encrypted message and key
-save_encrypted_message(encrypted_message, encrypted_message_path)
-save_key(key, encryption_key_path)
-
-print(f"✅ Encrypted message saved to: {encrypted_message_path}")
-print(f"✅ Encryption key saved to: {encryption_key_path}")
+if __name__ == "__main__":
+    # Example plaintext (replace with your real message source if needed)
+    long_message = "This is a very long message. " * 100
+    token = encrypt_message_with_biometrics(long_message, HELPER_JSON, FACE_IMAGE_FOR_ENCRYPTION)
+    save_encrypted_message(token, ENCRYPTED_MESSAGE_TXT)
+    print(f"✅ Encrypted message saved to: {ENCRYPTED_MESSAGE_TXT}")
